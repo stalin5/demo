@@ -1,38 +1,24 @@
-version: '3.8'
+# ---- Build stage ----
+FROM maven:3.8.3-openjdk-17 AS build
+WORKDIR /app
+COPY pom.xml .
+RUN mvn -B -q dependency:go-offline
+COPY src ./src
+# Build without tests for faster deploys; remove -DskipTests if needed
+RUN mvn -B -q clean package -DskipTests
 
-services:
-  mysql:
-    image: mysql:8.0
-    container_name: mysql-container
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: demo_db
-      MYSQL_USER: user
-      MYSQL_PASSWORD: userpassword
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    networks:
-      - app-network
+# ---- Runtime stage ----
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /app
 
-  springboot-app:
-    build: .
-    container_name: springboot-app
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/demo_db
-      SPRING_DATASOURCE_USERNAME: user
-      SPRING_DATASOURCE_PASSWORD: userpassword
-    ports:
-      - "8080:8080"
-    depends_on:
-      - mysql
-    networks:
-      - app-network
+# Copy the built jar from the build stage; rename to app.jar
+COPY --from=build /app/target/*.jar /app/app.jar
 
-volumes:
-  mysql-data:
+# Render will map its own PORT env; Spring Boot will read it if server.port is set to ${PORT:8080}
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseContainerSupport"
+ENV PORT=8080
 
-networks:
-  app-network:
-    driver: bridge
+EXPOSE 8080
+
+# Use exec form so signals are properly forwarded on Render
+ENTRYPOINT ["sh","-c","java $JAVA_OPTS -jar /app/app.jar --server.port=${PORT}"]
